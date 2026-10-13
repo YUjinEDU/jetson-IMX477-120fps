@@ -1,0 +1,23 @@
+{
+  "frames": 600,
+  "mode": 1,
+  "width": 1920,
+  "height": 1080,
+  "target_fps": 60,
+  "geometry_ok": true,
+  "samples_ok": true,
+  "invalid_timestamps": 0,
+  "bad_sensor_intervals": 0,
+  "host_interval_min_ms": 14.7666,
+  "host_interval_max_ms": 18.4684,
+  "target_frames": 600,
+  "exposure_us": 4000,
+  "analog_gain": 2,
+  "sensor_duration_sec": 9.98347,
+  "sensor_fps": 59.9992,
+  "host_delivery_fps": 60.0006,
+  "frame_gaps": 0,
+  "min_interval_ms": 16.545,
+  "max_interval_ms": 16.786,
+  "passed": true
+}

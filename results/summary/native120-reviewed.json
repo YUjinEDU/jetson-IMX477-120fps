@@ -1,0 +1,10 @@
+{
+  "frames": 600,
+  "errors": 0,
+  "missing_sequences": 0,
+  "measured_fps": 120.16527841335223,
+  "sensor_geometry_matches": true,
+  "capture_exit_status": 0,
+  "capture_path": "native kernel driver; no I2C writes",
+  "passed": true
+}

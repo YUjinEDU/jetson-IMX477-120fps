@@ -10,38 +10,54 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 KERNEL="$(uname -r)"
 TARGET="/lib/modules/$KERNEL/updates/drivers/media/i2c/nv_imx477.ko"
-BACKUP_DIR="$REPO_ROOT/build/backup"
-BACKUP="$BACKUP_DIR/nv_imx477-stock.ko"
+BACKUP_DIR="/var/lib/imx477-120fps/$KERNEL"
+BACKUP="$BACKUP_DIR/nv_imx477-pre-install.ko"
+
+validate_module() {
+    [[ -s "$1" ]] || { echo "Empty/missing module: $1" >&2; exit 1; }
+    [[ "$(modinfo -F vermagic "$1")" == "$KERNEL "* ]] || {
+        echo "Vermagic mismatch: $1" >&2; exit 1;
+    }
+}
+
+save_backup() {
+    validate_module "$TARGET"
+    install -d -m 700 "$BACKUP_DIR"
+    if [[ ! -e "$BACKUP" ]]; then
+        install -m 600 "$TARGET" "$BACKUP"
+        (cd "$BACKUP_DIR" && sha256sum nv_imx477-pre-install.ko > SHA256SUMS)
+    fi
+    validate_module "$BACKUP"
+    (cd "$BACKUP_DIR" && sha256sum -c SHA256SUMS)
+    echo "Pre-install backup: $BACKUP (not necessarily a factory module)"
+}
+
+if [[ "${1:-}" == "--backup-only" ]]; then
+    save_backup
+    exit 0
+fi
 
 if [[ "${1:-}" == "--restore" ]]; then
-    if [[ ! -f "$BACKUP" ]]; then
+    if [[ ! -s "$BACKUP" ]]; then
         echo "No backup file found at $BACKUP" >&2
         exit 1
     fi
+    validate_module "$BACKUP"
+    (cd "$BACKUP_DIR" && sha256sum -c SHA256SUMS)
     install -m 644 "$BACKUP" "$TARGET"
     depmod -a "$KERNEL"
-    echo "Restored original driver to $TARGET. Reboot required to take effect."
+    echo "Restored pre-install driver to $TARGET. Reboot required to take effect."
     exit 0
 fi
 
 SOURCE="${1:-$REPO_ROOT/build/driver/nv_imx477.ko}"
-if [[ ! -f "$SOURCE" ]]; then
+if [[ ! -s "$SOURCE" ]]; then
     echo "Driver binary not found at $SOURCE. Run build-driver.sh first." >&2
     exit 1
 fi
 
-# Verify vermagic matches running kernel
-if [[ "$(modinfo -F vermagic "$SOURCE")" != "$KERNEL "* ]]; then
-    echo "Vermagic mismatch: driver built for different kernel than $KERNEL." >&2
-    exit 1
-fi
-
-mkdir -p "$BACKUP_DIR"
-if [[ -f "$TARGET" && ! -f "$BACKUP" ]]; then
-    echo "Creating initial backup of currently installed module..."
-    cp -a "$TARGET" "$BACKUP"
-    echo "Backup saved to $BACKUP (SHA256: $(sha256sum "$BACKUP" | cut -d ' ' -f1))"
-fi
+validate_module "$SOURCE"
+save_backup
 
 echo "Installing $SOURCE to $TARGET..."
 install -m 644 "$SOURCE" "$TARGET"

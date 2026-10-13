@@ -1,78 +1,33 @@
-# IMX477 120fps Pipeline Overview & Architecture
+# Camera pipeline scope
 
-## 1. Introduction
+Validated target: Jetson Orin Nano Super 8GB, Ubuntu 24.04, L4T R39.2.1 /
+JetPack 7.2.1, kernel 6.8.12-1021-tegra.
 
-This repository provides a production-grade 120fps camera pipeline for the **Sony IMX477** (Raspberry Pi High Quality Camera) on the **NVIDIA Jetson Orin Nano / Orin series** (JetPack 6.x / L4T R39.2.1 / Kernel 5.15).
+## Native RAW path
 
-While stock NVIDIA drivers support 4K @ 30fps (Mode 0) and 1080p @ 60fps (Mode 1), this project introduces **Mode 2 (1332×990 @ 120fps)** across the entire stack:
-1. **Kernel Driver & DTS**: High-bandwidth timing configuration (840 MHz pixel clock, 2-lane MIPI CSI-2).
-2. **NVIDIA Hardware ISP**: Native Libargus support with verified ISP demosaicing and 3A algorithms via custom NITO tuning.
-3. **Downstream High-Speed Processing**: Delivering uncompressed, high-cadence 120fps frames directly to GPU memory for real-time computer vision and machine learning applications.
+IMX477 → CSI/VI → V4L2 RG10 → mmap capture.
+`color_pipeline.cpp` copies mmap data into cached RAM, applies a software
+RAW-to-color transform and uses OpenCV CPU demosaicing. It is not GPU
+debayering, calibrated ISP output or a zero-copy end-to-end pipeline.
 
----
+## ISP path
 
-## 2. System Architecture
+IMX477 → CSI/VI → NVIDIA ISP → Libargus EGLStream FIFO → FrameConsumer.
+`argus_fps_probe.cpp` enables capture metadata, requests fixed 4ms exposure /
+2x sensor analog gain with AUTO white balance, checks timestamps/numbering and
+image resolution, then releases frames. Optional JPEG encoding is outside the
+timed measurement.
 
-The project supports two main capture paths depending on the application requirements:
+This establishes processed frame acquisition, not downstream RGB conversion,
+display, recording or GPU inference throughput. Sensor and host timestamps
+are kept in separate clock domains; no sensor-to-host latency is claimed.
 
-```
-[ Sony IMX477 Sensor ] (1332x990 @ 120fps, 2-lane MIPI CSI-2)
-          │
-          ▼
-[ Tegra VI (Video Input) Engine ]
-          │
-    ┌─────┴────────────────────────────────┐
-    │                                      │
-    ▼ (Path A: Raw V4L2)                   ▼ (Path B: Hardware ISP)
-[ V4L2 Video Node (/dev/video0) ]    [ Tegra ISP Engine & RTCPU ]
-    │ (RAW10 Bayer)                        │ (Auto Exposure, WB, Tone Mapping)
-    ▼                                      ▼
-[ capture120 (C) ]                   [ nvargus-daemon ]
-    │ (Direct DMA / mmap)                  │ (EGLStream Producer)
-    ▼                                      ▼
-[ color_pipeline (C++/OpenCV) ]      [ Direct Libargus EGLStream ]
-    │ (Software Debayer/Color Correct)     │ (argus_fps_probe / EGL Consumer)
-    └──────────────────┬───────────────────┘
-                       │
-                       ▼ (NV12 / BGR Frame Buffer)
-       [ Zero-Copy / Shared Memory Ingest ]
-                       │
-                       ▼
-    [ Real-Time Computer Vision / Deep Learning Pipeline ]
-      (Object Tracking, Robotics, Optical Flow, TensorRT)
-```
+## Image quality
 
-### Path A: Native Raw V4L2 Pipeline
-- **Bypasses ISP completely**: Delivers raw Bayer RG10 frames directly from `/dev/video0`.
-- **Latency**: Sub-millisecond sensor-to-host delivery.
-- **Color Reconstruction**: Performed via vectorized OpenCV CPU/GPU debayering (`color_pipeline.cpp`) or custom shader/CUDA kernels.
-- **Throughput**: Solid 120.165 fps (verified via `tests/hardware/verify_native.sh`).
+Mode 0: 3840×2160 at 30fps; mode 1: 1920×1080 at 60fps; mode 2:
+1332×990 at 120fps. Resolution, crop, readout, exposure and tuning differ.
+Binning sacrifices spatial resolution for speed. This sensor/lens assembly
+does not provide software-controlled optical focus through this application.
+Focus/aperture/lighting and calibrated color need separate assessment.
 
-### Path B: NVIDIA Hardware ISP Pipeline (Libargus)
-- **Zero-CPU Demosaicing & 3A**: NVIDIA's dedicated hardware ISP handles demosaicing, bad-pixel correction, temporal noise reduction (TNR), lens shading correction (LSC), and auto-white-balance (AWB).
-- **Direct EGLStream Consumer**: Uses native Libargus `EGLStream::FrameConsumer` with FIFO buffer depth 16 to achieve **120.24 fps** with **0 frame drops** (verified via `tests/hardware/verify_isp.sh`).
-- **GStreamer Note**: Stock `libgstnvarguscamerasrc.so` element incurs lockstep thread synchronization overhead that throttles delivery to ~60.5fps. High-framerate applications must consume directly via Libargus.
-
----
-
-## 3. Sensor Mode Specifications
-
-| Mode ID | Resolution | Max FPS | MIPI Lanes | Pixel Clock | Formats Supported |
-| :---: | :---: | :---: | :---: | :---: | :---: |
-| **0** | 3840×2160 (4K) | 30 fps | 2 | 840 MHz | RAW10, NV12, BGR |
-| **1** | 1920×1080 (1080p) | 60 fps | 2 | 840 MHz | RAW10, NV12, BGR |
-| **2** | **1332×990 (120fps)** | **120 fps** | **2** | **840 MHz** | **RAW10, NV12, BGR** |
-
----
-
-## 4. Hardware & Software Requirements
-
-- **Carrier Board & SoC**: NVIDIA Jetson Orin Nano Super / Orin Nano / Orin NX (P3768 carrier + P3767 module).
-- **Camera Sensor**: Raspberry Pi High Quality Camera (Sony IMX477 sensor, 12.3MP, C/CS mount).
-- **Cable**: Standard 15-pin to 22-pin or 22-pin 0.5mm pitch CSI ribbon cable.
-- **Operating System**: Jetson Linux 36.x / 39.2.1 (JetPack 6.x, Ubuntu 22.04 LTS, Kernel 5.15).
-- **Dependencies**:
-  - GCC / G++ 11+
-  - Libargus (`/usr/src/jetson_multimedia_api/include`, `/usr/lib/aarch64-linux-gnu/nvidia/libnvargus.so`)
-  - OpenCV 4.x
-  - TensorRT 10.x
+The hardware tests do not require a monitor. Images are local-only by default.

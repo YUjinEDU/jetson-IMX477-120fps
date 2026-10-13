@@ -1,118 +1,58 @@
-# IMX477 Kernel Driver & Device Tree Guide
+# Driver and device-tree development
 
-## 1. Overview
+Baseline: L4T R39.2.1 NVIDIA/RidgeRun IMX477 source.
+Only the present Orin Nano Super / kernel 6.8.12-1021-tegra is validated.
 
-The stock L4T IMX477 driver (`nv_imx477.c`) supports only two sensor modes:
-- Mode 0: 3840×2160 @ 30fps
-- Mode 1: 1920×1080 @ 60fps
+## Mode 2 timing
 
-To support **Mode 2: 1332×990 @ 120fps**, changes were implemented across three key areas:
-1. **Sensor Register Initialization**: Register sequence for 2×2 on-sensor binning / analog crop.
-2. **Timing Arithmetic**: Frame length line (FLL), line length pixel (LLP), and pixel clock calculation.
-3. **Device Tree Overlay (DTS)**: Node properties, pixel clock advertisements, and VI/CSI endpoint routing.
+Output 1332×990, two MIPI lanes, 2×2 binning/crop.
+The driver uses 840,000,000Hz for frame-length/exposure arithmetic,
+line length 6667 and nominal frame length 1049:
 
----
+`6667 × 1049 / 840000000 = 8.3258ms` (about 120.108fps).
 
-## 2. Sensor Timing Mathematics
+The runtime DT advertises `pix_clk_hz=300000000`. This differs from the
+driver's internal timing clock. Do not replace either value merely to make
+them numerically match. Empirical sensor timestamps are the throughput evidence.
 
-The IMX477 internal timing operates with an on-chip PLL fed by an external 24 MHz oscillator, generating an internal system clock of **840 MHz**.
-
-The frame period $T_{\text{frame}}$ is given by:
-
-$$T_{\text{frame}} = \frac{\text{Line Length (LLP)} \times \text{Frame Length (FLL)}}{\text{Pixel Clock Frequency}}$$
-
-For Mode 2 (1332×990 @ 120fps):
-- **Pixel Clock**: $840,000,000\text{ Hz}$
-- **Line Length (LLP / `0x0342` & `0x0343`)**: $6667\text{ pixels}$ (`0x1a0b`)
-- **Frame Length (FLL / `0x0340` & `0x0341`)**: $1049\text{ lines}$ (`0x0419`)
-
-Calculating the resulting frame time:
-$$T_{\text{frame}} = \frac{6667 \times 1049}{840,000,000} \approx \frac{6,993,683}{840,000,000} \approx 0.0083258\text{ seconds} \approx 8.326\text{ ms}$$
-
-$$\text{Frame Rate} = \frac{1}{0.0083258} \approx 120.108\text{ fps}$$
-
-This matches our empirical measurement of **120.165 fps** within $0.05\%$.
-
----
-
-## 3. Register Configuration (`imx477_mode_tbls.h`)
-
-Mode 2 register settings configure the sensor into a 2×2 binned readout mode:
-- Output width: $1332$ (`0x034c: 0x05`, `0x034d: 0x34`)
-- Output height: $990$ (`0x034e: 0x03`, `0x034f: 0xde`)
-- Binning mode: 2×2 digital/analog binning enabled (`0x0900: 0x01`, `0x0901: 0x22`)
-- Exposure range: Min 1 line ($13\,\mu\text{s}$), Max FLL - 4 lines ($8.3\,\text{ms}$ at 120fps).
-
----
-
-## 4. Device Tree (`tegra234-p3767-camera-p3768-imx477-A.dts`)
-
-The device tree overlay defines the mode for the Tegra Video Input (VI) driver:
-```dts
-mode2 {
-    mclk_khz = "24000";
-    num_lanes = "2";
-    tegra_sinterface = "serial_a";
-    phy_mode = "DPHY";
-    discontinuous_clk = "yes";
-    dpcm_enable = "false";
-    cil_settletime = "0";
-
-    active_w = "1332";
-    active_h = "990";
-    mode_type = "bayer";
-    pixel_phase = "rggb";
-    csi_pixel_bit_depth = "10";
-    readout_orientation = "0";
-    line_length = "6667";
-    inherent_gain = "1";
-    mclk_multiplier = "35";
-    pix_clk_hz = "300000000";
-
-    min_gain_val = "1.0";
-    max_gain_val = "22.25";
-    min_exp_time = "13";
-    max_exp_time = "683709";
-    min_hdr_ratio = "1";
-    max_hdr_ratio = "1";
-    min_framerate = "1.5";
-    max_framerate = "120.0";
-};
-```
-
----
-
-## 5. Out-of-Tree Driver Build
-
-Instead of compiling the entire 200MB+ Jetson kernel source tree, this repository provides a standalone out-of-tree build script:
+## Building
 
 ```bash
-./scripts/driver/build-driver.sh
+bash scripts/driver/build-driver.sh
 ```
 
-### How it works:
-1. Validates that running kernel headers exist in `/lib/modules/$(uname -r)/build`.
-2. Generates a standalone Kbuild Makefile.
-3. Compiles `driver/src/nv_imx477.c` against running kernel ABI.
-4. Performs verification assertions on the resulting `build/driver/nv_imx477.ko`:
-   - Checks kernel module version string (`vermagic`).
-   - Verifies CRC checksums of key V4L2/Tegra exported symbols (`tegra_camera_device_register`, `v4l2_subdev_init`, etc.).
+Requires matching kernel headers plus `/usr/src/nvidia/nvidia-public` headers
+and Module.symvers. The generated build asserts camera_common_data offsets
+mode=612 and mode_prop_idx=616 with the relevant PMC conftest macro.
+This intentionally fails on incompatible layouts. A matching vermagic alone
+does not establish ABI compatibility.
 
----
+## Deployment limits
 
-## 6. Safe Driver Deployment & Reboot Requirement
+`install-for-next-boot.sh` stages the module under
+`/lib/modules/<kernel>/updates/drivers/media/i2c/nv_imx477.ko`.
+It never unloads the running module. It **does not install the device tree**.
 
-> [!CAUTION]
-> **NEVER attempt to hot-unload `nv_imx477` with `modprobe -r` or `rmmod`!**
-> The Tegra camera host driver retains active bus bindings; unloading the module while bound causes an immediate kernel panic and system reboot.
+The DTS in `driver/dts/` must be compiled with its matching NVIDIA DTS includes
+and integrated with the carrier's existing boot overlay configuration.
+Record and back up the actual DTBO/boot selection before any change.
+There is no universal automated DTBO installer in this release; do not assume
+installing the module alone enables mode 2 on a fresh Jetson.
 
-To install a freshly built kernel module safely:
 ```bash
-./scripts/driver/install-for-next-boot.sh
-sudo reboot
+sudo bash scripts/driver/install-for-next-boot.sh --backup-only
+sudo bash scripts/driver/install-for-next-boot.sh
+# Review DTBO and boot selection, then reboot when authorized.
 ```
 
-After rebooting, verify that the module loaded correctly:
-```bash
-./scripts/driver/verify-after-boot.sh
-```
+Backups live outside ignored build outputs in
+`/var/lib/imx477-120fps/<kernel>/`, with a SHA256 manifest. They preserve the
+pre-install module, which may already be patched. No factory backup is claimed.
+
+## Regression
+
+Never hot-unload/unbind this sensor. Run native and ISP tests serially.
+`verify-after-boot.sh` remains an opt-in administrative tool; its GStreamer
+EOS check alone is not an FPS measurement. Use the timestamp-based ISP probe
+for throughput validation, and do not enable boot automation without checking
+its installed ExecStart and backup.

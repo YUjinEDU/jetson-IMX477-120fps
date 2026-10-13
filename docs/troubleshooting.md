@@ -1,76 +1,54 @@
-# Troubleshooting & Operational Safety Guide
+# Safety and recovery
 
-## 1. Safety Rules & Critical Warnings
+## Camera ownership
 
-### Rule 1: Never Hot-Unload the Kernel Module (`nv_imx477`)
-> [!CAUTION]
-> **DO NOT run `modprobe -r nv_imx477` or `rmmod nv_imx477` on a running system!**
-> The Tegra Camera Platform driver (`tegra-camera`) and VI engine maintain active devnode links to the sensor driver. Forcibly unbinding or removing `nv_imx477` while the kernel host driver is active triggers an immediate kernel NULL pointer dereference / panic, resulting in an unrecoverable freeze or instant reboot.
->
-> **Correct procedure**: Always copy new `.ko` modules to `/lib/modules/$(uname -r)/updates/` and reboot the Jetson gracefully using `sudo reboot`.
+Only one camera client may run. Inspect exact PIDs before stopping a client:
 
-### Rule 2: Do Not Byte-Patch Stock NITO Files
-> [!WARNING]
-> Do not attempt to hex-edit or offset-patch `/var/nvidia/nvcam/settings/imx477.nito`. Corrupted NITO files will cause `nvargus-daemon` to segfault or trigger an automated fallback loop. Always use officially generated NITO files containing verified knob sets.
-
----
-
-## 2. Common Issues & Diagnostics
-
-### Issue A: "Camera device not found" / `/dev/video0` Missing
-1. **Check CSI Ribbon Cable**: Ensure the cable is oriented correctly (contacts facing the board on standard Jetson carriers, silver pins facing down/blue backing facing up depending on slot).
-2. **Check I2C Communication**:
-   ```bash
-   sudo i2cdetect -y -r 9
-   ```
-   Address `0x1a` should be displayed as `UU` (owned by driver) or `1a`.
-3. **Check Kernel Messages**:
-   ```bash
-   dmesg | grep -i imx477
-   ```
-   Expected output:
-   ```
-   imx477 9-001a: tegracam sensor driver:imx477_v2.0.6
-   imx477 9-001a: Detected IMX477 sensor
-   ```
-
-### Issue B: Frame Capture Timeout (`PXL_SOF syncpt timeout`)
-- **Symptoms**: `capture120` or `v4l2-ctl` hangs and outputs:
-  ```
-  tegra-camrtc-capture-vi tegra-capture-vi: PXL_SOF syncpt timeout!
-  ```
-- **Cause**: MIPI CSI-2 clock or data lane not receiving signal. Typically caused by:
-  - Loose CSI ribbon cable.
-  - Another process holding the camera open.
-- **Fix**:
-  1. Kill any existing capture processes: `killall -9 capture120 argus_fps_probe gst-launch-1.0 || true`
-  2. Power off Jetson, reseat camera cable firmly at both ends, and power back on.
-
-### Issue C: `nvargus-daemon` Fails or Hangs
-- **Symptoms**: `argus_fps_probe` fails to connect or times out waiting for producer.
-- **Fix**:
-  Restart the daemon:
-  ```bash
-  sudo systemctl restart nvargus-daemon
-  journalctl -u nvargus-daemon -n 50 --no-pager
-  ```
-
----
-
-## 3. Rollback & Recovery Procedures
-
-### Rolling Back to Stock Driver:
-If you need to revert to the factory kernel module:
 ```bash
-sudo cp /lib/modules/$(uname -r)/kernel/drivers/media/i2c/nv_imx477.ko.stock \
-        /lib/modules/$(uname -r)/updates/nv_imx477.ko || true
-sudo depmod -a
-sudo reboot
+pgrep -fa 'argus_fps_probe|capture120|color_pipeline|isp_preview'
 ```
 
-### Rolling Back to Stock NITO:
-If you need to restore the factory ISP tuning file:
+Prefer SIGTERM to the confirmed process, allowing cleanup. Do not blindly use
+killall or SIGKILL. Restart nvargus-daemon only after capture clients exit.
+
+Never hot-unload or unbind nv_imx477: this device previously panicked during
+module removal. A reviewed on-disk replacement takes effect after reboot.
+
+## Driver recovery
+
+There is no verified factory .ko.stock at the previously documented location.
+Do not copy nonexistent backups or ignore failed recovery commands.
+
+The installer now preserves a non-empty, vermagic-matched pre-install module
+and SHA256 manifest under /var/lib/imx477-120fps/<kernel>/:
+
 ```bash
-sudo cp /var/nvidia/nvcam/settings/imx477.nito.stock /var/nvidia/nvcam/settings/imx477.nito
-sudo systemctl restart nvargus-daemon
+sudo bash scripts/driver/install-for-next-boot.sh --backup-only
+sudo bash scripts/driver/install-for-next-boot.sh --restore
+# Only reboot after verifying the restored module and matching boot device tree.
 ```
+
+The backup may be the already-patched known-good module, not factory stock.
+Driver recovery does not restore DTBO/boot configuration or ISP tuning.
+Keep separate checked backups for those components.
+
+## NITO recovery
+
+This device's original NITO is /var/nvidia/nvcam/settings/imx477.nito.stock,
+SHA256 46bd3bf5db07fca555efb3758399253632d52dffdf3dfb766bacac3612dab4a9.
+Verify this backup before use, stop capture clients, then restore it and
+restart the daemon. The original NITO removes mode-2 ISP support.
+
+## Failed probes
+
+Missing/zero timestamps, non-monotonic sensor times, frame-number gaps,
+unexpected image size, out-of-range FPS, or failed acquisition are FAIL.
+Host-arrival jitter is reported separately from sensor intervals.
+Zero sensor timestamps must not be replaced with host times and labeled sensor FPS.
+
+For timeouts inspect daemon/kernel logs; do not immediately modify PLL/DT values.
+Do not scan/write the I2C bus or change trace settings without a specific need.
+
+A blue tint or soft focus is an image-quality issue even if throughput passes.
+Check AUTO WB metadata, known neutral/color targets, lens focus, aperture,
+lighting and mode-specific tuning. Do not equate an encoded JPEG with calibrated IQ.
