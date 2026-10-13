@@ -1,0 +1,11 @@
+[Unit]
+Description=Validate corrected IMX477 module and restore on-disk backup on failure
+After=network.target nvargus-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/yujin/codespace/IMX477-120fps/scripts/driver/verify-after-boot.sh
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

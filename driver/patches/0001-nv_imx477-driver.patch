@@ -1,0 +1,43 @@
+--- /home/yujin/codespace/imx477-debug/source-r39.2.1/nvidia-oot/drivers/media/i2c/nv_imx477.c	2026-08-07 13:39:37.000000000 +0900
++++ /home/yujin/codespace/IMX477-120fps/driver/src/nv_imx477.c	2026-10-12 20:09:04.536476993 +0900
+@@ -606,20 +606,39 @@
+ 
+ 	dev_dbg(tc_dev->dev, "%s:\n", __func__);
+ 	mode = of_get_child_by_name(tc_dev->dev->of_node, "mode0");
++	if (!mode)
++		return -EINVAL;
+ 	err = of_property_read_string(mode, "num_lanes", &config);
++	of_node_put(mode);
++	if (err)
++		return err;
+ 
+ 	if (config[0] == '4')
+ 		priv->config = FOUR_LANE_CONFIG;
+ 	else if (config[0] == '2')
+ 		priv->config = TWO_LANE_CONFIG;
+-	else
++	else {
+ 		dev_err(tc_dev->dev, "Unsupported config\n");
++		return -EINVAL;
++	}
++
++	err = imx477_write_reg(s_data, IMX477_STANDBY_REG, 0);
++	if (err)
++		return err;
++	msleep(10);
+ 
+ 	err = imx477_write_table(priv, mode_table[IMX477_MODE_COMMON]);
+ 	if (err)
+ 		return err;
+ 
+ 	mode_index = s_data->mode;
++	if (mode_index >= ARRAY_SIZE(imx477_frmfmt))
++		return -EINVAL;
++	dev_info(tc_dev->dev, "Applying sensor mode %u (property %u)\n",
++		 mode_index, s_data->mode_prop_idx);
++	if (priv->config == FOUR_LANE_CONFIG)
++		if (mode_index >= 2)
++			return -EINVAL;
+ 	if (priv->config == FOUR_LANE_CONFIG)
+ 		err = imx477_write_table(priv, mode_table[mode_index + offset]);
+ 	else

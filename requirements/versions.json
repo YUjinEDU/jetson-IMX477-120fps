@@ -1,0 +1,13 @@
+{
+  "torch": "2.14.1+cu130",
+  "torchvision": "0.29.1+cu130",
+  "ultralytics": "8.4.175",
+  "numpy": "1.26.4",
+  "opencv-python": "4.11.0.86",
+  "onnx": "1.23.2",
+  "onnxslim": "0.1.98",
+  "onnxruntime": "1.31.0",
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "platform": "Linux-6.8.12-1021-tegra-aarch64-with-glibc2.39",
+  "tensorrt": "10.16.2.10"
+}

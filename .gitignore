@@ -1,0 +1,52 @@
+# Build artifacts
+build/
+*.ko
+*.dtbo
+*.o
+*.mod
+*.mod.c
+*.mod.o
+*.symvers
+*.order
+.tmp_versions/
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv*/
+venv/
+env/
+.pytest_cache/
+
+# Machine Learning Models & Weights
+*.pt
+*.onnx
+*.engine
+models/local/
+
+# Raw media captures and large recordings
+*.raw
+*.nvraw
+*.mp4
+artifacts/local/
+*.csv
+!results/summary/*.csv
+
+# NVIDIA proprietary blobs & tuning files (redistribution restricted)
+*.nito
+*.cfg
+*.deb
+*.tbz2
+*.zip
+*.tar.*
+third_party/local/
+tools/usr/
+
+# System & Editor
+.DS_Store
+*.swp
+*.swo
+*~
+*.log
+*.jsonl
